@@ -19,6 +19,7 @@ const cors = require("cors");
 const argon2 = require("argon2");
 const jwt = require("jsonwebtoken");
 const pool = require("./db");
+const nutritionRouter = require("./nutrition");
 
 const app = express();
 
@@ -223,8 +224,15 @@ app.put("/users/profile", authMiddleware, async (req, res) => {
 
 
 /*********************************
+ * NUTRITION MODULE
+ *********************************/
+app.use('/nutrition', authMiddleware, nutritionRouter(pool, authMiddleware));
+
+
+/*********************************
  * START SERVER
  *********************************/
 app.listen(4000, "0.0.0.0", () => {
   console.log("🚀 Backend running on http://0.0.0.0:4000");
 });
+
