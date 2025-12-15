@@ -1,541 +1,413 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import {
   View,
   Text,
   ScrollView,
   TouchableOpacity,
-  ActivityIndicator,
+  SafeAreaView,
+  Platform,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { StatusBar } from "expo-status-bar";
 import { LinearGradient } from "expo-linear-gradient";
 import {
-  Flame,
-  Target,
-  TrendingUp,
-  Calendar,
+  Bell,
+  Settings,
+  Plus,
+  Wand2,
   Dumbbell,
+  Activity,
+  Clock3,
   Play,
+  Edit3,
+  Trash2,
 } from "lucide-react-native";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import useUser from "@/utils/auth/useUser";
+import * as SecureStore from "expo-secure-store";
 
 export default function Home() {
-  const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user } = useUser();
-  const [activeWorkout, setActiveWorkout] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [workouts, setWorkouts] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const username = useMemo(() => user?.name || "Alex", [user?.name]);
+  const BASE_URL =
+    Platform.OS === "android"
+      ? "http://10.0.2.2:4000"
+      : "http://192.168.100.114:4000";
 
   useEffect(() => {
-    fetchActiveWorkout();
+    fetchWorkouts();
   }, []);
 
-  const fetchActiveWorkout = async () => {
+  useFocusEffect(
+    useCallback(() => {
+      fetchWorkouts();
+    }, [])
+  );
+
+  async function fetchWorkouts() {
     try {
-      const res = await fetch("/api/workouts?status=active&limit=1");
-      if (res.ok) {
-        const data = await res.json();
-        if (data.workouts && data.workouts.length > 0) {
-          setActiveWorkout(data.workouts[0]);
-        }
+      setLoading(true);
+      const token = await SecureStore.getItemAsync("token");
+      if (!token) {
+        setWorkouts([]);
+        return;
       }
-    } catch (error) {
-      console.error("Error fetching active workout:", error);
+      const res = await fetch(`${BASE_URL}/workouts`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setWorkouts(data.workouts || []);
+    } catch (err) {
+      console.error("Home fetch workouts error:", err);
+      setWorkouts([]);
     } finally {
       setLoading(false);
     }
-  };
+  }
+
+  const accentForIndex = (idx) =>
+    idx % 2 === 0 ? ["#0EA5E9", "#22D3EE"] : ["#8EF264", "#4ADE80"];
 
   return (
-    <View style={{ flex: 1, backgroundColor: "#0A1628" }}>
-      <StatusBar style="light" />
-
-      {/* Header with gradient */}
-      <LinearGradient
-        colors={["#22D3EE", "#8EF264"]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={{
-          paddingTop: insets.top + 20,
-          paddingBottom: 30,
-          paddingHorizontal: 20,
-        }}
-      >
-        <Text
-          style={{
-            fontSize: 32,
-            fontWeight: "bold",
-            color: "#0A1628",
-            marginBottom: 4,
-          }}
+    <LinearGradient
+      colors={["#0A1628", "#071020", "#050B18"]}
+      style={{ flex: 1 }}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 0, y: 1 }}
+    >
+      <SafeAreaView style={{ flex: 1 }}>
+        <ScrollView
+          contentContainerStyle={{ paddingBottom: 32 }}
+          showsVerticalScrollIndicator={false}
         >
-          TrenirAI
-        </Text>
-        <Text style={{ fontSize: 16, color: "#0A1628", opacity: 0.8 }}>
-          Your Fitness Journey
-        </Text>
-      </LinearGradient>
-
-      <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={{ paddingBottom: 20 }}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Stats Cards */}
-        <View style={{ paddingHorizontal: 20, marginTop: -15 }}>
-          <View style={{ flexDirection: "row", gap: 12, marginBottom: 20 }}>
-            {/* Active Days */}
-            <View
-              style={{
-                flex: 1,
-                backgroundColor: "#0F1E32",
-                borderRadius: 16,
-                padding: 16,
-                borderWidth: 1,
-                borderColor: "#22D3EE33",
-              }}
-            >
-              <View
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 20,
-                  backgroundColor: "#22D3EE22",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  marginBottom: 12,
-                }}
-              >
-                <Calendar color="#22D3EE" size={20} />
-              </View>
+          {/* Header */}
+          <View
+            style={{
+              paddingHorizontal: 20,
+              paddingTop: 12,
+              paddingBottom: 18,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <View>
               <Text
                 style={{
-                  fontSize: 24,
-                  fontWeight: "bold",
-                  color: "#fff",
+                  color: "#9CA3AF",
+                  fontSize: 13,
                   marginBottom: 4,
                 }}
               >
-                12
+                Welcome back,
               </Text>
-              <Text style={{ fontSize: 12, color: "#9CA3AF" }}>
-                Active Days
+              <Text
+                style={{
+                  color: "#22D3EE",
+                  fontSize: 22,
+                  fontWeight: "700",
+                }}
+              >
+                {username}
               </Text>
             </View>
-
-            {/* Calories Burned */}
-            <View
-              style={{
-                flex: 1,
-                backgroundColor: "#0F1E32",
-                borderRadius: 16,
-                padding: 16,
-                borderWidth: 1,
-                borderColor: "#8EF26433",
-              }}
-            >
-              <View
+            <View style={{ flexDirection: "row", gap: 12 }}>
+              <TouchableOpacity
                 style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 20,
-                  backgroundColor: "#8EF26422",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  marginBottom: 12,
+                  backgroundColor: "#0F1E32",
+                  padding: 10,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: "#22D3EE33",
                 }}
               >
-                <Flame color="#8EF264" size={20} />
-              </View>
-              <Text
+                <Bell color="#8EF264" size={18} />
+              </TouchableOpacity>
+              <TouchableOpacity
                 style={{
-                  fontSize: 24,
-                  fontWeight: "bold",
-                  color: "#fff",
-                  marginBottom: 4,
+                  backgroundColor: "#0F1E32",
+                  padding: 10,
+                  borderRadius: 12,
+                  borderWidth: 1,
+                  borderColor: "#22D3EE33",
                 }}
               >
-                2.4k
-              </Text>
-              <Text style={{ fontSize: 12, color: "#9CA3AF" }}>Calories</Text>
+                <Settings color="#22D3EE" size={18} />
+              </TouchableOpacity>
             </View>
           </View>
 
-          {/* Active Workout Card */}
-          {loading ? (
-            <View style={{ padding: 40, alignItems: "center" }}>
-              <ActivityIndicator size="large" color="#22D3EE" />
-            </View>
-          ) : activeWorkout ? (
-            <View style={{ marginBottom: 24 }}>
-              <Text
-                style={{
-                  fontSize: 20,
-                  fontWeight: "bold",
-                  color: "#fff",
-                  marginBottom: 16,
-                }}
+          {/* Actions */}
+          <View style={{ paddingHorizontal: 20, marginBottom: 16 }}>
+            <Text
+              style={{
+                color: "#fff",
+                fontSize: 18,
+                fontWeight: "700",
+                marginBottom: 6,
+              }}
+            >
+              Moji Treninzi
+            </Text>
+            <Text style={{ color: "#9CA3AF", fontSize: 13, marginBottom: 12 }}>
+              {workouts.length} programa
+            </Text>
+
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <TouchableOpacity
+                activeOpacity={0.9}
+                style={{ flex: 1 }}
+                onPress={() => router.push("/(tabs)/workouts?mode=manual")}
               >
-                Today's Workout
-              </Text>
-              <LinearGradient
-                colors={["#22D3EE22", "#8EF26422"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={{
-                  borderRadius: 20,
-                  padding: 20,
-                  borderWidth: 2,
-                  borderColor: "#22D3EE44",
-                }}
-              >
-                <View
+                <LinearGradient
+                  colors={["#0EA5E9", "#22D3EE"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
                   style={{
-                    flexDirection: "row",
+                    borderRadius: 16,
+                    paddingVertical: 14,
                     alignItems: "center",
-                    marginBottom: 16,
+                    justifyContent: "center",
+                    flexDirection: "row",
+                    gap: 8,
                   }}
                 >
-                  <View
-                    style={{
-                      width: 50,
-                      height: 50,
-                      borderRadius: 25,
-                      backgroundColor: "#22D3EE",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      marginRight: 12,
-                    }}
-                  >
-                    <Dumbbell color="#0A1628" size={24} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text
-                      style={{
-                        fontSize: 18,
-                        fontWeight: "bold",
-                        color: "#fff",
-                        marginBottom: 4,
-                      }}
-                    >
-                      {activeWorkout.name}
-                    </Text>
-                    <Text style={{ fontSize: 13, color: "#9CA3AF" }}>
-                      {activeWorkout.exercise_count || 0} exercises
-                    </Text>
-                  </View>
-                </View>
-
-                <View
-                  style={{ flexDirection: "row", gap: 12, marginBottom: 16 }}
-                >
-                  <View
-                    style={{
-                      flex: 1,
-                      backgroundColor: "#0A162822",
-                      borderRadius: 12,
-                      padding: 12,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 12,
-                        color: "#9CA3AF",
-                        marginBottom: 4,
-                      }}
-                    >
-                      Difficulty
-                    </Text>
-                    <Text
-                      style={{
-                        fontSize: 16,
-                        fontWeight: "600",
-                        color: "#fff",
-                        textTransform: "capitalize",
-                      }}
-                    >
-                      {activeWorkout.difficulty || "Medium"}
-                    </Text>
-                  </View>
-                  <View
-                    style={{
-                      flex: 1,
-                      backgroundColor: "#0A162822",
-                      borderRadius: 12,
-                      padding: 12,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        fontSize: 12,
-                        color: "#9CA3AF",
-                        marginBottom: 4,
-                      }}
-                    >
-                      Total Sets
-                    </Text>
-                    <Text
-                      style={{ fontSize: 16, fontWeight: "600", color: "#fff" }}
-                    >
-                      {activeWorkout.total_sets || 0}
-                    </Text>
-                  </View>
-                </View>
-
-                <TouchableOpacity
-                  onPress={() =>
-                    router.push(`/(tabs)/workout/${activeWorkout.id}`)
-                  }
-                  style={{ marginTop: 8 }}
-                >
-                  <LinearGradient
-                    colors={["#22D3EE", "#8EF264"]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 0 }}
-                    style={{
-                      borderRadius: 14,
-                      padding: 18,
-                      flexDirection: "row",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: 8,
-                    }}
-                  >
-                    <Play color="#0A1628" size={20} fill="#0A1628" />
-                    <Text
-                      style={{
-                        fontSize: 16,
-                        fontWeight: "bold",
-                        color: "#0A1628",
-                      }}
-                    >
-                      Start Training
-                    </Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-              </LinearGradient>
-            </View>
-          ) : (
-            <View
-              style={{
-                backgroundColor: "#0F1E32",
-                borderRadius: 20,
-                padding: 30,
-                alignItems: "center",
-                marginBottom: 24,
-                borderWidth: 1,
-                borderColor: "#22D3EE33",
-              }}
-            >
-              <Dumbbell
-                color="#9CA3AF"
-                size={40}
-                style={{ marginBottom: 12 }}
-              />
-              <Text
-                style={{ fontSize: 16, color: "#9CA3AF", textAlign: "center" }}
-              >
-                No active workout found
-              </Text>
-            </View>
-          )}
-
-          {/* Training Objectives Section */}
-          <View style={{ marginBottom: 24 }}>
-            <Text
-              style={{
-                fontSize: 20,
-                fontWeight: "bold",
-                color: "#fff",
-                marginBottom: 16,
-              }}
-            >
-              Training Objectives
-            </Text>
-
-            {/* Weight Loss Goal */}
-            <View
-              style={{
-                backgroundColor: "#0F1E32",
-                borderRadius: 16,
-                padding: 20,
-                marginBottom: 12,
-                borderWidth: 1,
-                borderColor: "#22D3EE22",
-              }}
-            >
-              <View
-                style={{
-                  flexDirection: "row",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  marginBottom: 12,
-                }}
-              >
-                <View
-                  style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
-                >
-                  <Target color="#22D3EE" size={20} />
+                  <Plus color="#0A1628" size={18} />
                   <Text
-                    style={{ fontSize: 16, fontWeight: "600", color: "#fff" }}
+                    style={{ color: "#0A1628", fontWeight: "700", fontSize: 15 }}
                   >
-                    Weight Loss
+                    Kreiraj
                   </Text>
-                </View>
-                <Text
-                  style={{ fontSize: 14, color: "#22D3EE", fontWeight: "600" }}
-                >
-                  75%
-                </Text>
-              </View>
-              <View
-                style={{
-                  height: 8,
-                  backgroundColor: "#0A1628",
-                  borderRadius: 4,
-                  overflow: "hidden",
-                }}
-              >
-                <View
-                  style={{
-                    width: "75%",
-                    height: "100%",
-                    backgroundColor: "#22D3EE",
-                    borderRadius: 4,
-                  }}
-                />
-              </View>
-              <Text style={{ fontSize: 12, color: "#9CA3AF", marginTop: 8 }}>
-                Target: 80kg • Current: 85kg
-              </Text>
-            </View>
+                </LinearGradient>
+              </TouchableOpacity>
 
-            {/* Distance Running Goal */}
-            <View
-              style={{
-                backgroundColor: "#0F1E32",
-                borderRadius: 16,
-                padding: 20,
-                borderWidth: 1,
-                borderColor: "#8EF26422",
-              }}
-            >
-              <View
-                style={{
-                  flexDirection: "row",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  marginBottom: 12,
-                }}
+              <TouchableOpacity
+                activeOpacity={0.9}
+                style={{ flex: 1 }}
+                onPress={() => router.push("/(tabs)/workouts?mode=ai")}
               >
-                <View
-                  style={{ flexDirection: "row", alignItems: "center", gap: 8 }}
-                >
-                  <TrendingUp color="#8EF264" size={20} />
-                  <Text
-                    style={{ fontSize: 16, fontWeight: "600", color: "#fff" }}
-                  >
-                    Distance Running
-                  </Text>
-                </View>
-                <Text
-                  style={{ fontSize: 14, color: "#8EF264", fontWeight: "600" }}
-                >
-                  60%
-                </Text>
-              </View>
-              <View
-                style={{
-                  height: 8,
-                  backgroundColor: "#0A1628",
-                  borderRadius: 4,
-                  overflow: "hidden",
-                }}
-              >
-                <View
+                <LinearGradient
+                  colors={["#A855F7", "#E879F9"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
                   style={{
-                    width: "60%",
-                    height: "100%",
-                    backgroundColor: "#8EF264",
-                    borderRadius: 4,
+                    borderRadius: 16,
+                    paddingVertical: 14,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexDirection: "row",
+                    gap: 8,
                   }}
-                />
-              </View>
-              <Text style={{ fontSize: 12, color: "#9CA3AF", marginTop: 8 }}>
-                Goal: 50km/week • Progress: 30km
-              </Text>
+                >
+                  <Wand2 color="#0A1628" size={18} />
+                  <Text
+                    style={{ color: "#0A1628", fontWeight: "700", fontSize: 15 }}
+                  >
+                    AI Kreiraj
+                  </Text>
+                </LinearGradient>
+              </TouchableOpacity>
             </View>
           </View>
 
-          {/* Weekly Analytics */}
-          <View style={{ marginBottom: 24 }}>
-            <Text
-              style={{
-                fontSize: 20,
-                fontWeight: "bold",
-                color: "#fff",
-                marginBottom: 16,
-              }}
-            >
-              Weekly Analytics
-            </Text>
-            <View
-              style={{
-                backgroundColor: "#0F1E32",
-                borderRadius: 16,
-                padding: 20,
-                borderWidth: 1,
-                borderColor: "#22D3EE22",
-              }}
-            >
+          {/* Program cards */}
+          <View style={{ paddingHorizontal: 20, gap: 18 }}>
+            {loading ? (
+              <Text style={{ color: "#9CA3AF" }}>Loading workouts...</Text>
+            ) : workouts.length === 0 ? (
               <View
                 style={{
-                  flexDirection: "row",
-                  justifyContent: "space-around",
-                  marginBottom: 16,
+                  padding: 18,
+                  borderRadius: 14,
+                  backgroundColor: "#0F1E32",
+                  borderWidth: 1,
+                  borderColor: "#22D3EE22",
                 }}
               >
-                {["M", "T", "W", "T", "F", "S", "S"].map((day, index) => {
-                  const heights = [40, 60, 45, 70, 55, 30, 50];
-                  return (
-                    <View key={index} style={{ alignItems: "center", gap: 8 }}>
+                <Text style={{ color: "#E5E7EB", fontWeight: "700" }}>
+                  Još nema treninga
+                </Text>
+                <Text style={{ color: "#9CA3AF", marginTop: 4 }}>
+                  Kreiraj novi ili probaj AI kreiranje.
+                </Text>
+              </View>
+            ) : (
+              workouts.map((card, idx) => {
+                const totalSets = card.exercises?.reduce(
+                  (sum, ex) => sum + (ex.sets || 0),
+                  0
+                );
+                return (
+                  <LinearGradient
+                    key={card.id}
+                    colors={["#0E172A", "#0B1323"]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={{
+                      borderRadius: 20,
+                      padding: 16,
+                      borderWidth: 1,
+                      borderColor: "#0EA5E922",
+                    }}
+                  >
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "flex-start",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <View style={{ flex: 1, paddingRight: 12 }}>
+                        <Text
+                          style={{
+                            color: "#E0F2FE",
+                            fontSize: 18,
+                            fontWeight: "700",
+                            marginBottom: 4,
+                          }}
+                        >
+                          {card.name}
+                        </Text>
+                        {card.description ? (
+                          <Text style={{ color: "#9CA3AF", fontSize: 13 }}>
+                            {card.description}
+                          </Text>
+                        ) : null}
+                      </View>
+                      <View style={{ flexDirection: "row", gap: 10 }}>
+                        <TouchableOpacity
+                          style={{
+                            backgroundColor: "#102036",
+                            padding: 8,
+                            borderRadius: 12,
+                            borderWidth: 1,
+                            borderColor: "#22D3EE33",
+                          }}
+                        >
+                          <Edit3 color="#22D3EE" size={18} />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={{
+                            backgroundColor: "#240F1C",
+                            padding: 8,
+                            borderRadius: 12,
+                            borderWidth: 1,
+                            borderColor: "#EF444422",
+                          }}
+                        >
+                          <Trash2 color="#EF4444" size={18} />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    {/* Stats row */}
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        gap: 16,
+                        marginVertical: 14,
+                      }}
+                    >
                       <View
+                        style={{ flexDirection: "row", alignItems: "center", gap: 6 }}
+                      >
+                        <Dumbbell color="#22D3EE" size={18} />
+                        <Text style={{ color: "#9CA3AF", fontSize: 13 }}>
+                          {(card.exercises || []).length} exercises
+                        </Text>
+                      </View>
+                      <View
+                        style={{ flexDirection: "row", alignItems: "center", gap: 6 }}
+                      >
+                        <Activity color="#A7F3D0" size={18} />
+                        <Text style={{ color: "#9CA3AF", fontSize: 13 }}>
+                          {totalSets || 0} sets
+                        </Text>
+                      </View>
+                      <View
+                        style={{ flexDirection: "row", alignItems: "center", gap: 6 }}
+                      >
+                        <Clock3 color="#C4B5FD" size={18} />
+                        <Text style={{ color: "#9CA3AF", fontSize: 13 }}>
+                          ~12 min
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Exercises */}
+                    <View
+                      style={{
+                        backgroundColor: "#0A1628",
+                        borderRadius: 14,
+                        borderWidth: 1,
+                        borderColor: "#22D3EE22",
+                        padding: 12,
+                        gap: 10,
+                      }}
+                    >
+                      {(card.exercises || []).map((ex, idx2) => (
+                        <View
+                          key={`${card.id}-${idx2}`}
+                          style={{
+                            flexDirection: "row",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                          }}
+                        >
+                          <Text style={{ color: "#E5E7EB", fontSize: 14 }}>
+                            {ex.name}
+                          </Text>
+                          <Text
+                            style={{ color: "#22D3EE", fontSize: 14, fontWeight: "600" }}
+                          >
+                            {(ex.sets || 0) + " × " + (ex.reps || 0)}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+
+                    <TouchableOpacity
+                      activeOpacity={0.9}
+                      style={{ marginTop: 14 }}
+                      onPress={() => router.push("/(tabs)/workouts")}
+                    >
+                      <LinearGradient
+                        colors={accentForIndex(idx)}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
                         style={{
-                          width: 32,
-                          height: 80,
-                          backgroundColor: "#0A1628",
-                          borderRadius: 8,
-                          justifyContent: "flex-end",
-                          overflow: "hidden",
+                          borderRadius: 14,
+                          paddingVertical: 14,
+                          alignItems: "center",
+                          justifyContent: "center",
+                          flexDirection: "row",
+                          gap: 8,
+                          borderWidth: 1,
+                          borderColor: "#22D3EE44",
                         }}
                       >
-                        <View
+                        <Play color="#0A1628" size={18} fill="#0A1628" />
+                        <Text
                           style={{
-                            width: "100%",
-                            height: `${heights[index]}%`,
-                            backgroundColor:
-                              index === 4 ? "#22D3EE" : "#22D3EE66",
-                            borderRadius: 8,
+                            color: "#0A1628",
+                            fontWeight: "800",
+                            fontSize: 15,
                           }}
-                        />
-                      </View>
-                      <Text style={{ fontSize: 12, color: "#9CA3AF" }}>
-                        {day}
-                      </Text>
-                    </View>
-                  );
-                })}
-              </View>
-              <Text
-                style={{ fontSize: 12, color: "#9CA3AF", textAlign: "center" }}
-              >
-                Workout Frequency (minutes)
-              </Text>
-            </View>
+                        >
+                          Start Workout
+                        </Text>
+                      </LinearGradient>
+                    </TouchableOpacity>
+                  </LinearGradient>
+                );
+              })
+            )}
           </View>
-        </View>
-      </ScrollView>
-    </View>
+        </ScrollView>
+      </SafeAreaView>
+    </LinearGradient>
   );
 }

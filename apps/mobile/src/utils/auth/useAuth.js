@@ -35,9 +35,10 @@ export const useAuth = () => {
   }, [open]);
 
   const signOut = useCallback(() => {
-    setAuth(null);
+    setAuth(null); // clears authKey in SecureStore
+    SecureStore.deleteItemAsync('token'); // legacy token key used elsewhere
     close();
-  }, [close]);
+  }, [close, setAuth]);
 
   return {
     isReady,

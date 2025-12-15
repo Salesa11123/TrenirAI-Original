@@ -10,8 +10,12 @@ import {
   HelpCircle,
   LogOut,
 } from "lucide-react-native";
+import { useRouter } from "expo-router";
+import { useAuth } from "@/utils/auth/useAuth";
 
 export default function Profile() {
+  const router = useRouter();
+  const { signOut } = useAuth();
   const insets = useSafeAreaInsets();
 
   const menuItems = [
@@ -163,6 +167,10 @@ export default function Profile() {
 
         {/* Logout Button */}
         <TouchableOpacity
+          onPress={() => {
+            signOut();
+            router.replace("/auth/welcome");
+          }}
           style={{
             backgroundColor: "#0F1E32",
             borderRadius: 16,
