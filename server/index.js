@@ -2,11 +2,11 @@
  * GLOBAL ERROR HANDLING
  *********************************/
 process.on("uncaughtException", (err) => {
-  console.error("❌ UNCAUGHT EXCEPTION:", err);
+  console.error("UNCAUGHT EXCEPTION:", err);
 });
 
 process.on("unhandledRejection", (err) => {
-  console.error("❌ UNHANDLED PROMISE:", err);
+  console.error("UNHANDLED PROMISE:", err);
 });
 
 /*********************************
@@ -25,11 +25,69 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Ensure new tables/columns exist for workout tracking
+async function ensureSchema() {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS workout_sets (
+        id SERIAL PRIMARY KEY,
+        workout_id INTEGER NOT NULL REFERENCES workouts(id) ON DELETE CASCADE,
+        exercise_id INTEGER NOT NULL REFERENCES workout_exercises(id) ON DELETE CASCADE,
+        set_number INTEGER NOT NULL,
+        weight_kg NUMERIC,
+        reps_completed INTEGER,
+        completed BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    await client.query(
+      'CREATE INDEX IF NOT EXISTS idx_workout_sets_workout ON workout_sets(workout_id);'
+    );
+    await client.query(`
+      ALTER TABLE workouts
+        ADD COLUMN IF NOT EXISTS started_at TIMESTAMP,
+        ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP,
+        ADD COLUMN IF NOT EXISTS duration_minutes INTEGER,
+        ADD COLUMN IF NOT EXISTS calories_burned INTEGER,
+        ADD COLUMN IF NOT EXISTS total_kg_lifted NUMERIC,
+        ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'ready';
+    `);
+    await client.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'chk_workouts_status'
+        ) THEN
+          ALTER TABLE workouts
+            ADD CONSTRAINT chk_workouts_status
+            CHECK (status IN ('ready','in_progress','complete'));
+        END IF;
+      END$$;
+    `);
+    await client.query(
+      "UPDATE workouts SET status = 'ready' WHERE status IS NULL;"
+    );
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("Schema ensure error:", err);
+  } finally {
+    client.release();
+  }
+}
+
+ensureSchema().catch((err) =>
+  console.error("Ensure schema failed:", err.message)
+);
+
 /*********************************
  * REQUEST LOGGER
  *********************************/
 app.use((req, res, next) => {
-  console.log(`➡️ ${req.method} ${req.url}`);
+  console.log(`${req.method} ${req.url}`);
   next();
 });
 
@@ -37,7 +95,7 @@ app.use((req, res, next) => {
  * HEALTH CHECK
  *********************************/
 app.get("/", (req, res) => {
-  res.send("✅ Backend is running");
+  res.send("Backend is running");
 });
 
 /*********************************
@@ -91,7 +149,7 @@ app.post("/signup", async (req, res) => {
 
     res.json({ success: true });
   } catch (err) {
-    console.error("❌ SIGNUP ERROR:", err);
+    console.error("SIGNUP ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -129,50 +187,34 @@ app.post("/login", async (req, res) => {
 
     res.json({ token });
   } catch (err) {
-    console.error("❌ LOGIN ERROR:", err);
+    console.error("LOGIN ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
 /*********************************
- * CHECK IF PROFILE EXISTS ✅ FIXED
- *********************************/
-/*********************************
- * CHECK IF PROFILE EXISTS
- *********************************/
-/*********************************
- * CHECK IF PROFILE EXISTS + RETURN PROFILE ✅ FINAL
+ * PROFILE
  *********************************/
 app.get("/users/profile", authMiddleware, async (req, res) => {
   try {
-    console.log("🔍 GET /users/profile for user:", req.user.id);
-
     const result = await pool.query(
       'SELECT * FROM user_profiles WHERE "userId" = $1 LIMIT 1',
       [req.user.id]
     );
 
     const exists = result.rowCount > 0;
-    console.log("📊 profile exists:", exists);
-
     return res.json({
       exists,
       profile: exists ? result.rows[0] : null,
     });
   } catch (err) {
-    console.error("❌ PROFILE GET ERROR:", err);
+    console.error("PROFILE GET ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
-/*********************************
- * SAVE / UPDATE PROFILE ✅ FINAL
- *********************************/
 app.put("/users/profile", authMiddleware, async (req, res) => {
   try {
-    console.log("💾 PUT /users/profile for user:", req.user.id);
-    console.log("📦 body:", req.body);
-
     const {
       gender,
       age,
@@ -212,19 +254,478 @@ app.put("/users/profile", authMiddleware, async (req, res) => {
       ]
     );
 
-    console.log("✅ PROFILE SAVED OK");
     res.json({ success: true });
   } catch (err) {
-    console.error("❌ PROFILE SAVE ERROR:", err);
+    console.error("PROFILE SAVE ERROR:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
+/*********************************
+ * WORKOUTS CRUD
+ *********************************/
+async function fetchWorkoutsWithExercises(userId) {
+  const workoutsRes = await pool.query(
+    `
+      SELECT id, name, description, status, started_at, completed_at,
+             duration_minutes, total_kg_lifted, created_at, updated_at
+      FROM workouts
+      WHERE user_id = $1
+      ORDER BY created_at DESC
+    `,
+    [userId]
+  );
 
+  const workouts = workoutsRes.rows;
+  if (workouts.length === 0) return [];
+
+  const ids = workouts.map((w) => w.id);
+  const exercisesRes = await pool.query(
+    `
+      SELECT id, workout_id, name, sets, reps, rest_seconds, target_weight_kg, created_at, updated_at
+      FROM workout_exercises
+      WHERE workout_id = ANY($1)
+      ORDER BY id ASC
+    `,
+    [ids]
+  );
+
+  const byWorkout = exercisesRes.rows.reduce((acc, ex) => {
+    acc[ex.workout_id] = acc[ex.workout_id] || [];
+    acc[ex.workout_id].push(ex);
+    return acc;
+  }, {});
+
+  return workouts.map((w) => ({
+    ...w,
+    exercises: byWorkout[w.id] || [],
+  }));
+}
+
+async function fetchWorkoutDetail(userId, workoutId) {
+  const workoutRes = await pool.query(
+    `
+      SELECT id, name, description, started_at, completed_at, duration_minutes,
+             status,
+             calories_burned, total_kg_lifted, created_at, updated_at
+      FROM workouts
+      WHERE id = $1 AND user_id = $2
+      LIMIT 1
+    `,
+    [workoutId, userId]
+  );
+
+  if (workoutRes.rowCount === 0) return null;
+  const workout = workoutRes.rows[0];
+
+  const exercisesRes = await pool.query(
+    `
+      SELECT id, workout_id, name, sets, reps, rest_seconds, target_weight_kg, created_at, updated_at
+      FROM workout_exercises
+      WHERE workout_id = $1
+      ORDER BY id ASC
+    `,
+    [workout.id]
+  );
+
+  const exerciseIds = exercisesRes.rows.map((ex) => ex.id);
+  const setsRes =
+    exerciseIds.length > 0
+      ? await pool.query(
+          `
+        SELECT id, workout_id, exercise_id, set_number, weight_kg, reps_completed, completed, created_at, updated_at
+        FROM workout_sets
+        WHERE workout_id = $1 AND exercise_id = ANY($2)
+        ORDER BY exercise_id ASC, set_number ASC
+      `,
+          [workout.id, exerciseIds]
+        )
+      : { rows: [] };
+
+  // Auto-create set rows if missing (for older data)
+  if (exerciseIds.length > 0 && setsRes.rows.length === 0) {
+    const insertValues = [];
+    const insertPlaceholders = [];
+    exercisesRes.rows.forEach((exRow) => {
+      const count = exRow.sets || 0;
+      for (let i = 0; i < count; i++) {
+        const base = insertValues.length;
+        insertValues.push(
+          workout.id,
+          exRow.id,
+          i + 1,
+          exRow.target_weight_kg || null
+        );
+        insertPlaceholders.push(
+          `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, NULL, FALSE)`
+        );
+      }
+    });
+    if (insertPlaceholders.length > 0) {
+      await pool.query(
+        `
+          INSERT INTO workout_sets
+            (workout_id, exercise_id, set_number, weight_kg, reps_completed, completed)
+          VALUES ${insertPlaceholders.join(",")}
+        `,
+        insertValues
+      );
+      const refreshedSets = await pool.query(
+        `
+        SELECT id, workout_id, exercise_id, set_number, weight_kg, reps_completed, completed, created_at, updated_at
+        FROM workout_sets
+        WHERE workout_id = $1 AND exercise_id = ANY($2)
+        ORDER BY exercise_id ASC, set_number ASC
+      `,
+        [workout.id, exerciseIds]
+      );
+      setsRes.rows.push(...refreshedSets.rows);
+    }
+  }
+
+  const setsByExercise = setsRes.rows.reduce((acc, set) => {
+    acc[set.exercise_id] = acc[set.exercise_id] || [];
+    acc[set.exercise_id].push(set);
+    return acc;
+  }, {});
+
+  const exercises = exercisesRes.rows.map((ex, idx) => {
+    const sets =
+      setsByExercise[ex.id] && setsByExercise[ex.id].length > 0
+        ? setsByExercise[ex.id]
+        : Array.from({ length: ex.sets || 0 }).map((_, i) => ({
+            id: `synthetic-${ex.id}-${i + 1}`,
+            workout_id: workout.id,
+            exercise_id: ex.id,
+            set_number: i + 1,
+            weight_kg: ex.target_weight_kg,
+            reps_completed: null,
+            completed: false,
+          }));
+    return { ...ex, sets };
+  });
+
+  return {
+    ...workout,
+    exercises,
+  };
+}
+
+// list
+app.get("/workouts", authMiddleware, async (req, res) => {
+  try {
+    const data = await fetchWorkoutsWithExercises(req.user.id);
+    res.json({ workouts: data });
+  } catch (err) {
+    console.error("Workout list error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// create (manual)
+app.post("/workouts", authMiddleware, async (req, res) => {
+  const { name, description, exercises = [] } = req.body || {};
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: "Name is required" });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const workoutRes = await client.query(
+      `INSERT INTO workouts (user_id, name, description)
+       VALUES ($1, $2, $3)
+       RETURNING id, name, description, created_at, updated_at`,
+      [req.user.id, name.trim(), description || null]
+    );
+
+    const workout = workoutRes.rows[0];
+
+    if (Array.isArray(exercises) && exercises.length > 0) {
+      const values = [];
+      const placeholders = exercises.map((ex, idx) => {
+        const base = idx * 6;
+        values.push(
+          workout.id,
+          ex.name || "",
+          ex.sets ? parseInt(ex.sets, 10) || 0 : 0,
+          ex.reps ? parseInt(ex.reps, 10) || 0 : 0,
+          ex.rest ? parseInt(ex.rest, 10) || null : null,
+          ex.weight != null && ex.weight !== "" ? Number(ex.weight) : null
+        );
+        return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`;
+      });
+
+      await client.query(
+        `
+        INSERT INTO workout_exercises
+          (workout_id, name, sets, reps, rest_seconds, target_weight_kg)
+        VALUES ${placeholders.join(",")}
+        `,
+        values
+      );
+
+      const insertedExercises = await client.query(
+        `SELECT id, sets, rest_seconds, target_weight_kg FROM workout_exercises WHERE workout_id = $1 ORDER BY id ASC`,
+        [workout.id]
+      );
+
+      const setValues = [];
+      const setPlaceholders = [];
+      insertedExercises.rows.forEach((exRow) => {
+        const count = exRow.sets || 0;
+        for (let i = 0; i < count; i++) {
+          const base = setValues.length;
+          setValues.push(
+            workout.id,
+            exRow.id,
+            i + 1,
+            exRow.target_weight_kg || null
+          );
+          setPlaceholders.push(
+            `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, NULL, FALSE)`
+          );
+        }
+      });
+
+      if (setPlaceholders.length > 0) {
+        await client.query(
+          `
+          INSERT INTO workout_sets
+            (workout_id, exercise_id, set_number, weight_kg, reps_completed, completed)
+          VALUES ${setPlaceholders.join(",")}
+          `,
+          setValues
+        );
+      }
+    }
+
+    await client.query("COMMIT");
+    const data = await fetchWorkoutsWithExercises(req.user.id);
+    res.status(201).json({ workout, workouts: data });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("Workout create error:", err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// AI generator stub: creates a workout and saves it
+app.post("/workouts/ai", authMiddleware, async (req, res) => {
+  const { prompt } = req.body || {};
+  const baseName = prompt?.trim() ? `AI: ${prompt.trim()}` : "AI Workout";
+
+  const suggestions = [
+    { name: "Push-ups", sets: 3, reps: 12, rest: 60, weight: null },
+    { name: "Squats", sets: 4, reps: 10, rest: 75, weight: null },
+    { name: "Plank", sets: 3, reps: 45, rest: 60, weight: null },
+  ];
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const workoutRes = await client.query(
+      `INSERT INTO workouts (user_id, name, description)
+       VALUES ($1, $2, $3)
+       RETURNING id, name, description, created_at, updated_at`,
+      [req.user.id, baseName, prompt || null]
+    );
+    const workout = workoutRes.rows[0];
+
+    const values = [];
+    const placeholders = suggestions.map((ex, idx) => {
+      const base = idx * 6;
+      values.push(
+        workout.id,
+        ex.name,
+        ex.sets,
+        ex.reps,
+        ex.rest,
+        ex.weight
+      );
+      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`;
+    });
+
+    await client.query(
+      `
+      INSERT INTO workout_exercises
+        (workout_id, name, sets, reps, rest_seconds, target_weight_kg)
+      VALUES ${placeholders.join(",")}
+      `,
+      values
+    );
+
+    const insertedExercises = await client.query(
+      `SELECT id, sets, rest_seconds, target_weight_kg FROM workout_exercises WHERE workout_id = $1 ORDER BY id ASC`,
+      [workout.id]
+    );
+
+    const setValues = [];
+    const setPlaceholders = [];
+    insertedExercises.rows.forEach((exRow) => {
+      const count = exRow.sets || 0;
+      for (let i = 0; i < count; i++) {
+        const base = setValues.length;
+        setValues.push(
+          workout.id,
+          exRow.id,
+          i + 1,
+          exRow.target_weight_kg || null
+        );
+        setPlaceholders.push(
+          `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, NULL, FALSE)`
+        );
+      }
+    });
+
+    if (setPlaceholders.length > 0) {
+      await client.query(
+        `
+        INSERT INTO workout_sets
+          (workout_id, exercise_id, set_number, weight_kg, reps_completed, completed)
+        VALUES ${setPlaceholders.join(",")}
+        `,
+        setValues
+      );
+    }
+
+    await client.query("COMMIT");
+    const data = await fetchWorkoutsWithExercises(req.user.id);
+    res.status(201).json({ workout, workouts: data });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("AI workout create error:", err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// get single workout with exercises + sets
+app.get("/workouts/:id", authMiddleware, async (req, res) => {
+  try {
+    const workoutId = req.params.id;
+    const workout = await fetchWorkoutDetail(req.user.id, workoutId);
+    if (!workout) return res.status(404).json({ error: "Workout not found" });
+    res.json(workout);
+  } catch (err) {
+    console.error("Workout detail error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// update workout actions: start or complete
+app.put("/workouts/:id", authMiddleware, async (req, res) => {
+  const workoutId = req.params.id;
+  const { action, duration, calories_burned, total_kg_lifted } = req.body || {};
+
+  if (!["start", "complete"].includes(action)) {
+    return res.status(400).json({ error: "Invalid action" });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    if (action === "start") {
+      await client.query(
+        `
+          UPDATE workouts
+          SET started_at = NOW(),
+              completed_at = NULL,
+              duration_minutes = NULL,
+              calories_burned = NULL,
+              total_kg_lifted = NULL,
+              status = 'in_progress'
+          WHERE id = $1 AND user_id = $2
+        `,
+        [workoutId, req.user.id]
+      );
+    } else if (action === "complete") {
+      const durationMinutes = duration != null ? parseInt(duration, 10) : null;
+      await client.query(
+        `
+          UPDATE workouts
+          SET completed_at = NOW(),
+              duration_minutes = $1,
+              calories_burned = $2,
+              total_kg_lifted = $3,
+              status = 'complete'
+          WHERE id = $4 AND user_id = $5
+        `,
+        [durationMinutes, calories_burned || null, total_kg_lifted || null, workoutId, req.user.id]
+      );
+    }
+
+    await client.query("COMMIT");
+    const workout = await fetchWorkoutDetail(req.user.id, workoutId);
+    res.json(workout);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("Workout update error:", err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// update a set
+app.put("/workouts/:id/sets/:setId", authMiddleware, async (req, res) => {
+  const workoutId = req.params.id;
+  const setId = req.params.setId;
+  const { weight_kg, reps_completed, completed } = req.body || {};
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    // ownership check
+    const check = await client.query(
+      `
+      SELECT ws.id
+      FROM workout_sets ws
+      JOIN workout_exercises we ON ws.exercise_id = we.id
+      JOIN workouts w ON ws.workout_id = w.id
+      WHERE ws.id = $1 AND ws.workout_id = $2 AND w.user_id = $3
+      LIMIT 1
+    `,
+      [setId, workoutId, req.user.id]
+    );
+
+    if (check.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Set not found" });
+    }
+
+    await client.query(
+      `
+        UPDATE workout_sets
+        SET weight_kg = $1,
+            reps_completed = $2,
+            completed = $3,
+            updated_at = NOW()
+        WHERE id = $4
+      `,
+      [weight_kg != null ? Number(weight_kg) : null, reps_completed != null ? parseInt(reps_completed, 10) : null, completed === false ? false : true, setId]
+    );
+
+    await client.query("COMMIT");
+    const workout = await fetchWorkoutDetail(req.user.id, workoutId);
+    res.json(workout);
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("Set update error:", err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
 
 /*********************************
  * START SERVER
  *********************************/
 app.listen(4000, "0.0.0.0", () => {
-  console.log("🚀 Backend running on http://0.0.0.0:4000");
+  console.log("Backend running on http://0.0.0.0:4000");
 });

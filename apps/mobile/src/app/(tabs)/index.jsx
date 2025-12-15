@@ -17,6 +17,7 @@ import {
   Activity,
   Clock3,
   Play,
+  Trophy,
   Edit3,
   Trash2,
 } from "lucide-react-native";
@@ -34,7 +35,7 @@ export default function Home() {
   const BASE_URL =
     Platform.OS === "android"
       ? "http://10.0.2.2:4000"
-      : "http://192.168.100.114:4000";
+      : "http://192.168.0.41:4000";
 
   useEffect(() => {
     fetchWorkouts();
@@ -237,9 +238,27 @@ export default function Home() {
             ) : (
               workouts.map((card, idx) => {
                 const totalSets = card.exercises?.reduce(
-                  (sum, ex) => sum + (ex.sets || 0),
+                  (sum, ex) => sum + (parseInt(ex.sets, 10) || 0),
                   0
                 );
+                const totalRest = card.exercises?.reduce(
+                  (sum, ex) =>
+                    sum +
+                    (parseInt(ex.sets, 10) || 0) *
+                      (parseInt(ex.rest_seconds, 10) || 60),
+                  0
+                );
+                const estimatedMinutes = Math.max(
+                  5,
+                  Math.round((totalRest + totalSets * 40) / 60)
+                );
+                const isComplete = card.status === "complete";
+                const statusLabel =
+                  card.status === "complete"
+                    ? "Completed"
+                    : card.status === "in_progress"
+                    ? "In Progress"
+                    : "Ready";
                 return (
                   <LinearGradient
                     key={card.id}
@@ -249,8 +268,8 @@ export default function Home() {
                     style={{
                       borderRadius: 20,
                       padding: 16,
-                      borderWidth: 1,
-                      borderColor: "#0EA5E922",
+                      borderWidth: 1.2,
+                      borderColor: isComplete ? "#8EF26466" : "#0EA5E922",
                     }}
                   >
                     <View
@@ -277,29 +296,88 @@ export default function Home() {
                           </Text>
                         ) : null}
                       </View>
-                      <View style={{ flexDirection: "row", gap: 10 }}>
-                        <TouchableOpacity
-                          style={{
-                            backgroundColor: "#102036",
-                            padding: 8,
-                            borderRadius: 12,
-                            borderWidth: 1,
-                            borderColor: "#22D3EE33",
-                          }}
-                        >
-                          <Edit3 color="#22D3EE" size={18} />
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={{
-                            backgroundColor: "#240F1C",
-                            padding: 8,
-                            borderRadius: 12,
-                            borderWidth: 1,
-                            borderColor: "#EF444422",
-                          }}
-                        >
-                          <Trash2 color="#EF4444" size={18} />
-                        </TouchableOpacity>
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 10,
+                        }}
+                      >
+                        {isComplete ? (
+                          <View
+                            style={{
+                              paddingHorizontal: 12,
+                              paddingVertical: 8,
+                              backgroundColor: "#122918",
+                              borderRadius: 12,
+                              borderWidth: 1,
+                              borderColor: "#8EF26455",
+                              flexDirection: "row",
+                              alignItems: "center",
+                              gap: 6,
+                            }}
+                          >
+                            <Trophy color="#8EF264" size={16} />
+                            <Text
+                              style={{
+                                color: "#8EF264",
+                                fontWeight: "700",
+                                fontSize: 12,
+                              }}
+                            >
+                              Completed
+                            </Text>
+                          </View>
+                        ) : (
+                          <>
+                            <View
+                              style={{
+                                paddingHorizontal: 12,
+                                paddingVertical: 8,
+                                backgroundColor: "#0F1E32",
+                                borderRadius: 12,
+                                borderWidth: 1,
+                                borderColor: "#22D3EE44",
+                                flexDirection: "row",
+                                alignItems: "center",
+                                gap: 6,
+                              }}
+                            >
+                              <Activity color="#22D3EE" size={14} />
+                              <Text
+                                style={{
+                                  color: "#22D3EE",
+                                  fontWeight: "700",
+                                  fontSize: 12,
+                                }}
+                              >
+                                {statusLabel}
+                              </Text>
+                            </View>
+                            <TouchableOpacity
+                              style={{
+                                backgroundColor: "#102036",
+                                padding: 8,
+                                borderRadius: 12,
+                                borderWidth: 1,
+                                borderColor: "#22D3EE33",
+                              }}
+                            >
+                              <Edit3 color="#22D3EE" size={18} />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                              style={{
+                                backgroundColor: "#240F1C",
+                                padding: 8,
+                                borderRadius: 12,
+                                borderWidth: 1,
+                                borderColor: "#EF444422",
+                              }}
+                            >
+                              <Trash2 color="#EF4444" size={18} />
+                            </TouchableOpacity>
+                          </>
+                        )}
                       </View>
                     </View>
 
@@ -332,7 +410,7 @@ export default function Home() {
                       >
                         <Clock3 color="#C4B5FD" size={18} />
                         <Text style={{ color: "#9CA3AF", fontSize: 13 }}>
-                          ~12 min
+                          ~{estimatedMinutes} min
                         </Text>
                       </View>
                     </View>
@@ -372,10 +450,18 @@ export default function Home() {
                     <TouchableOpacity
                       activeOpacity={0.9}
                       style={{ marginTop: 14 }}
-                      onPress={() => router.push("/(tabs)/workouts")}
+                      onPress={() =>
+                        router.push(
+                          isComplete
+                            ? `/(tabs)/workout/${card.id}?summary=1`
+                            : `/(tabs)/workout/${card.id}`,
+                        )
+                      }
                     >
                       <LinearGradient
-                        colors={accentForIndex(idx)}
+                        colors={
+                          isComplete ? ["#8EF264", "#22D3EE"] : accentForIndex(idx)
+                        }
                         start={{ x: 0, y: 0 }}
                         end={{ x: 1, y: 0 }}
                         style={{
@@ -389,7 +475,11 @@ export default function Home() {
                           borderColor: "#22D3EE44",
                         }}
                       >
-                        <Play color="#0A1628" size={18} fill="#0A1628" />
+                        {isComplete ? (
+                          <Trophy color="#0A1628" size={18} />
+                        ) : (
+                          <Play color="#0A1628" size={18} fill="#0A1628" />
+                        )}
                         <Text
                           style={{
                             color: "#0A1628",
@@ -397,7 +487,7 @@ export default function Home() {
                             fontSize: 15,
                           }}
                         >
-                          Start Workout
+                          {isComplete ? "View Summary" : "Start Workout"}
                         </Text>
                       </LinearGradient>
                     </TouchableOpacity>
