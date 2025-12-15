@@ -14,26 +14,23 @@ import { useRouter } from "expo-router";
 import { LogIn } from "lucide-react-native";
 import * as SecureStore from "expo-secure-store";
 import KeyboardAvoidingAnimatedView from "@/components/KeyboardAvoidingAnimatedView";
+import { useAuth } from "@/utils/auth/useAuth";
 
 export default function Login() {
   const router = useRouter();
+  const { setAuth } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // --------------------------------------------------
-  // ⭐ AUTOMATSKO DETEKTOVANJE EMULATORA VS TELEFONA
-  // --------------------------------------------------
+  // Automatsko detektovanje emulatora vs. telefona
   const BASE_URL =
     Platform.OS === "android"
       ? "http://10.0.2.2:4000" // Android emulator
-      : "http://192.168.0.10:4000"; // Fizički telefon
+      : "http://192.168.100.114:4000"; // Fizički telefon
 
   const API_URL = `${BASE_URL}/login`;
 
-  // --------------------------------------------------
-  // ⭐ LOGIN FUNKCIJA
-  // --------------------------------------------------
   const handleLogin = async () => {
     const trimmedEmail = email.trim();
 
@@ -44,7 +41,7 @@ export default function Login() {
 
     setLoading(true);
     console.log("🔥 LOGIN BUTTON PRESSED");
-    console.log("📡 SENDING REQUEST TO:", API_URL);
+    console.log("🚀 SENDING REQUEST TO:", API_URL);
 
     try {
       const res = await fetch(API_URL, {
@@ -61,7 +58,7 @@ export default function Login() {
         return { error: "Invalid server response" };
       });
 
-      console.log("📥 LOGIN RESPONSE:", data);
+      console.log("📩 LOGIN RESPONSE:", data);
 
       if (!res.ok) {
         Alert.alert("Login failed", data.error || "Unknown server error");
@@ -69,14 +66,15 @@ export default function Login() {
         return;
       }
 
-      // Čuvamo token
+      // Sačuvaj token i podigni auth state
       if (data.token) {
-        await SecureStore.setItemAsync("token", data.token);
+        setAuth({ jwt: data.token }); // isAuthenticated će postati true
+        await SecureStore.setItemAsync("token", data.token); // legacy čitanje
       } else {
         console.log("⚠️ No token received from server");
       }
 
-      console.log("🎉 LOGIN SUCCESS!");
+      console.log("✅ LOGIN SUCCESS!");
       router.replace("/");
     } catch (err) {
       console.log("❌ LOGIN ERROR:", err);
@@ -86,16 +84,12 @@ export default function Login() {
     }
   };
 
-  // --------------------------------------------------
-  // ⭐ UI
-  // --------------------------------------------------
   return (
     <View style={{ flex: 1, backgroundColor: "#0A1628" }}>
       <StatusBar style="light" />
 
       <KeyboardAvoidingAnimatedView style={{ flex: 1 }} behavior="padding">
         <View style={{ flex: 1, paddingHorizontal: 30, justifyContent: "center" }}>
-          
           {/* Header */}
           <View style={{ alignItems: "center", marginBottom: 50 }}>
             <Text
@@ -201,11 +195,7 @@ export default function Login() {
             />
 
             {/* Login Button */}
-            <TouchableOpacity
-              onPress={handleLogin}
-              disabled={loading}
-              style={{ marginTop: 30 }}
-            >
+            <TouchableOpacity onPress={handleLogin} disabled={loading} style={{ marginTop: 30 }}>
               <LinearGradient
                 colors={["#22D3EE", "#8EF264"]}
                 start={{ x: 0, y: 0 }}
@@ -245,7 +235,6 @@ export default function Login() {
               <Text style={{ color: "#22D3EE", fontWeight: "600" }}>Sign Up</Text>
             </Text>
           </TouchableOpacity>
-
         </View>
       </KeyboardAvoidingAnimatedView>
     </View>

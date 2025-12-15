@@ -12,13 +12,13 @@ export default function Index() {
   const BASE_URL =
     Platform.OS === "android"
       ? "http://10.0.2.2:4000"
-      : "http://192.168.0.10:4000";
+      : "http://192.168.100.114:4000";
 
   useEffect(() => {
     let cancelled = false;
 
     async function checkProfile() {
-      console.log("🏠 Index checkProfile()", { isReady, isAuthenticated });
+      console.log("Index checkProfile()", { isReady, isAuthenticated });
 
       // auth još nije spreman
       if (!isReady) {
@@ -37,7 +37,7 @@ export default function Index() {
 
       try {
         const token = await SecureStore.getItemAsync("token");
-        console.log("🔐 token:", token);
+        console.log("Index token:", token);
 
         if (!token) {
           if (!cancelled) {
@@ -48,7 +48,7 @@ export default function Index() {
         }
 
         const url = `${BASE_URL}/users/profile`;
-        console.log("🌐 GET", url);
+        console.log("GET", url);
 
         const res = await fetch(url, {
           method: "GET",
@@ -57,10 +57,9 @@ export default function Index() {
           },
         });
 
-        console.log("📡 Profile status:", res.status);
+        console.log("Profile status:", res.status);
 
-        // Ključna stvar:
-        // - Ako je 200 OK → profil postoji (ne mora da vraća {exists:true})
+        // Ako je 200 OK i postoji telo sa nekim id/exists, tretiramo kao postoji profil
         if (res.ok) {
           let data = null;
           try {
@@ -69,13 +68,12 @@ export default function Index() {
             // ako nema JSON-a, i dalje tretiramo kao OK
           }
 
-          console.log("📨 Profile body:", data);
+          console.log("Profile body:", data);
 
           const exists =
             data?.exists === true ||
             data?.id != null ||
-            data?.profile?.id != null ||
-            true; // res.ok je dovoljan signal
+            data?.profile?.id != null;
 
           if (!cancelled) setHasProfile(!!exists);
         } else {
@@ -83,7 +81,7 @@ export default function Index() {
           if (!cancelled) setHasProfile(false);
         }
       } catch (e) {
-        console.error("💥 checkProfile error:", e);
+        console.error("checkProfile error:", e);
         if (!cancelled) setHasProfile(false);
       } finally {
         if (!cancelled) setCheckingProfile(false);
@@ -123,6 +121,6 @@ export default function Index() {
     return <Redirect href="/auth/onboarding" />;
   }
 
-  // ulogovan + ima profil -> workouts (stavi tačnu rutu)
-  return <Redirect href="/workouts" />;
+  // ulogovan + ima profil -> home tab
+  return <Redirect href="/(tabs)" />;
 }
