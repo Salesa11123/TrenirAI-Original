@@ -49,7 +49,7 @@ export default function Workouts() {
   const BASE_URL =
     Platform.OS === "android"
       ? "http://10.0.2.2:4000"
-      : "http://192.168.0.41:4000";
+      : "http://192.168.100.123:4000";
 
   useEffect(() => {
     setMode(initialMode);
@@ -235,6 +235,71 @@ export default function Workouts() {
           )}
         </ScrollView>
       </SafeAreaView>
+
+      {loading ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: "#020712CC",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <LinearGradient
+            colors={["#22D3EE44", "#8EF26444"]}
+            style={{
+              paddingVertical: 22,
+              paddingHorizontal: 20,
+              borderRadius: 16,
+              borderWidth: 1,
+              borderColor: "#22D3EE55",
+              width: "78%",
+              maxWidth: 360,
+              alignItems: "center",
+              gap: 12,
+            }}
+          >
+            <View
+              style={{
+                width: 46,
+                height: 46,
+                borderRadius: 12,
+                backgroundColor: "#0A1628",
+                alignItems: "center",
+                justifyContent: "center",
+                borderWidth: 1,
+                borderColor: "#22D3EE55",
+              }}
+            >
+              <Activity color="#22D3EE" size={26} />
+            </View>
+            <Text
+              style={{
+                color: "#E0F2FE",
+                fontWeight: "800",
+                fontSize: 16,
+                textAlign: "center",
+              }}
+            >
+              Generišemo AI trening...
+            </Text>
+            <Text
+              style={{
+                color: "#9CA3AF",
+                fontSize: 13,
+                textAlign: "center",
+              }}
+            >
+              Kreiramo plan u pozadini, samo trenutak.
+            </Text>
+          </LinearGradient>
+        </View>
+      ) : null}
     </LinearGradient>
   );
 }

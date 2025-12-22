@@ -27,7 +27,7 @@ export default function Login() {
   const BASE_URL =
     Platform.OS === "android"
       ? "http://10.0.2.2:4000" // Android emulator
-      : "http://192.168.0.41:4000"; // Fizički telefon
+      : "http://192.168.100.123:4000"; // Fizički telefon
 
   const API_URL = `${BASE_URL}/login`;
 

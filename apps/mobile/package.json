@@ -3,7 +3,9 @@
   "main": "index",
   "version": "1.0.0",
   "scripts": {
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "dependencies": {
     "@expo-google-fonts/dev": "^0.4.7",
@@ -83,7 +85,8 @@
     "sonner-native": "^0.21.0",
     "three": "^0.166.0",
     "yup": "^1.6.1",
-    "zustand": "5.0.3"
+    "zustand": "5.0.3",
+    "expo-dev-client": "~6.0.20"
   },
   "devDependencies": {
     "@expo/cli": "^54.0.1",
