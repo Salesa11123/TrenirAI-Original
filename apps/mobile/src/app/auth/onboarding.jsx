@@ -225,7 +225,7 @@ export default function Onboarding() {
 
     console.log("📤 PAYLOAD:", payload);
 
-    const res = await fetch("http://192.168.100.114:4000/users/profile", {
+    const res = await fetch("http://192.168.100.139:4000/users/profile", {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",

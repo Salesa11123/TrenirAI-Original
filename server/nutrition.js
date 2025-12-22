@@ -356,6 +356,23 @@ const routerFactory = (pool, authMiddleware) => {
     };
   };
 
+  const seededShuffle = (arr, seed) => {
+    const copy = [...arr];
+    let s = seed || 1;
+    for (let i = copy.length - 1; i > 0; i--) {
+      s = (s * 9301 + 49297) % 233280;
+      const j = Math.floor((s / 233280) * (i + 1));
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+    }
+    return copy;
+  };
+
+  const pickOne = (arr, seed) => {
+    if (!arr || arr.length === 0) return null;
+    const shuffled = seededShuffle(arr, seed);
+    return shuffled[0];
+  };
+
   const normalizeMealType = (value) => {
     const key = (value || "").toString().toLowerCase();
     const map = {
@@ -366,6 +383,159 @@ const routerFactory = (pool, authMiddleware) => {
       snacks: "Snacks",
     };
     return map[key] || "Snacks";
+  };
+
+  const pickSwap = (list) => {
+    if (!list || list.length === 0) return null;
+    return list[Math.floor(Math.random() * list.length)];
+  };
+
+  const fetchTemplates = async () => {
+    const tplRes = await pool.query(
+      `SELECT * FROM meal_plan_templates WHERE status = 'active' ORDER BY created_at ASC`
+    );
+    const tpls = tplRes.rows || [];
+    if (tpls.length === 0) return [];
+    const ids = tpls.map((t) => t.id);
+    const itemsRes = await pool.query(
+      `SELECT * FROM meal_plan_template_items WHERE template_id = ANY($1) ORDER BY order_index ASC, created_at ASC`,
+      [ids]
+    );
+    const byTpl = new Map();
+    itemsRes.rows.forEach((row) => {
+      if (!byTpl.has(row.template_id)) byTpl.set(row.template_id, []);
+      byTpl.get(row.template_id).push(row);
+    });
+    return tpls.map((t) => ({
+      ...t,
+      items: byTpl.get(t.id) || [],
+    }));
+  };
+
+  const pickTemplate = (templates, templateId, seed) => {
+    if (templateId) {
+      const found = templates.find((t) => t.id === templateId);
+      if (found) return found;
+    }
+    if (!templates || templates.length === 0) return null;
+    return pickOne(templates, seed || Date.now());
+  };
+
+  const buildPlanFromTemplate = async (userId, date, template) => {
+    const targets = await getUserTargets(userId);
+    const totalCalories = targets.calories || defaultTargets.calories;
+    const totalProtein = targets.protein || defaultTargets.protein;
+    const totalCarbs = targets.carbs || defaultTargets.carbs;
+    const totalFats = targets.fats || defaultTargets.fats;
+
+    const items = template.items || [];
+    const baseTotals = items.reduce(
+      (acc, item) => ({
+        calories: acc.calories + safeNumber(item.calories),
+        protein: acc.protein + safeNumber(item.protein),
+        carbs: acc.carbs + safeNumber(item.carbs),
+        fats: acc.fats + safeNumber(item.fats),
+      }),
+      { calories: 0, protein: 0, carbs: 0, fats: 0 }
+    );
+    const factor =
+      baseTotals.calories > 0 ? safeNumber(totalCalories, 2000) / baseTotals.calories : 1;
+
+    return items.map((item, idx) => ({
+      id: crypto.randomUUID(),
+      title: item.title,
+      meal_type: item.meal_type,
+      planned_time: item.planned_time,
+      order_index: idx,
+      serving_qty: item.serving_qty || 1,
+      serving_unit: item.serving_unit || "1 serving",
+      description: item.description,
+      calories: Math.round(safeNumber(item.calories) * factor),
+      protein: Math.round(safeNumber(item.protein) * factor),
+      carbs: Math.round(safeNumber(item.carbs) * factor),
+      fats: Math.round(safeNumber(item.fats) * factor),
+      ingredients: item.ingredients || null,
+      applied: false,
+      template_item_id: item.id,
+    }));
+  };
+
+  const buildFallbackPlan = async (userId, date, templateId) => {
+    const templates = await fetchTemplates();
+    const seedBase = Number((date || "").replace(/-/g, "")) || Date.now();
+    const tpl = pickTemplate(templates, templateId, seedBase);
+    if (!tpl || !tpl.items || tpl.items.length === 0) {
+      // ultimate fallback: empty plan
+      return [];
+    }
+    return buildPlanFromTemplate(userId, date, tpl);
+  };
+
+  const getPlanWithItems = async (planId, userId) => {
+    const planRes = await pool.query(
+      `SELECT * FROM meal_plans WHERE id = $1 AND user_id = $2 LIMIT 1`,
+      [planId, userId]
+    );
+    if (planRes.rowCount === 0) return null;
+    const plan = planRes.rows[0];
+    const itemsRes = await pool.query(
+      `SELECT * FROM meal_plan_items WHERE plan_id = $1 ORDER BY order_index ASC, created_at ASC`,
+      [planId]
+    );
+    plan.items = itemsRes.rows || [];
+    return plan;
+  };
+
+  const createPlan = async (userId, date, items, templateId) => {
+    const insertPlan = await pool.query(
+      `INSERT INTO meal_plans (user_id, plan_date, status, note) VALUES ($1,$2,'active','AI template plan') RETURNING *`,
+      [userId, date]
+    );
+    const plan = insertPlan.rows[0];
+    for (const item of items) {
+      await pool.query(
+        `
+        INSERT INTO meal_plan_items (
+          id, plan_id, title, meal_type, calories, protein, carbs, fats, unit,
+          serving_qty, serving_unit, planned_time, description, ingredients, applied, order_index, food_item_id
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+        `,
+        [
+          item.id || crypto.randomUUID(),
+          plan.id,
+          item.title,
+          normalizeMealType(item.meal_type || "snack"),
+          safeNumber(item.calories),
+          safeNumber(item.protein),
+          safeNumber(item.carbs),
+          safeNumber(item.fats),
+          item.unit || "1 serving",
+          safeNumber(item.serving_qty || 1),
+          item.serving_unit || item.unit || "1 serving",
+          item.planned_time || null,
+          item.description || "",
+          item.ingredients ? JSON.stringify(item.ingredients) : null,
+          item.applied || false,
+          safeNumber(item.order_index || 0),
+          item.template_item_id || null,
+        ]
+      );
+    }
+    return getPlanWithItems(plan.id, userId);
+  };
+
+  const getOrCreatePlan = async (userId, date, templateId) => {
+    const planDate = date || new Date().toISOString().slice(0, 10);
+    const existing = await pool.query(
+      `SELECT id FROM meal_plans WHERE user_id = $1 AND plan_date = $2 LIMIT 1`,
+      [userId, planDate]
+    );
+    if (existing.rowCount > 0) {
+      return getPlanWithItems(existing.rows[0].id, userId);
+    }
+    const fallbackItems = await buildFallbackPlan(userId, planDate, templateId);
+    return createPlan(userId, planDate, fallbackItems, templateId);
   };
 
   router.get("/search", authMiddleware, async (req, res) => {
@@ -412,6 +582,218 @@ const routerFactory = (pool, authMiddleware) => {
     } catch (err) {
       console.error("Nutrition today error:", err.message);
       return res.status(500).json({ error: "Failed to load nutrition summary" });
+    }
+  });
+
+  router.get("/templates", authMiddleware, async (_req, res) => {
+    try {
+      const templates = await fetchTemplates();
+      return res.json({ templates });
+    } catch (err) {
+      console.error("Nutrition templates error:", err.message);
+      return res.status(500).json({ error: "Failed to load templates" });
+    }
+  });
+
+  router.get("/plan", authMiddleware, async (req, res) => {
+    try {
+      const date = req.query.date || new Date().toISOString().slice(0, 10);
+      const templateId = req.query.templateId || req.query.template_id;
+      const plan = await getOrCreatePlan(req.user.id, date, templateId);
+      return res.json({
+        plan: {
+          id: plan.id,
+          plan_date: plan.plan_date,
+          status: plan.status,
+          note: plan.note,
+        },
+        items: plan.items || [],
+      });
+    } catch (err) {
+      console.error("Nutrition plan get error:", err.message);
+      return res.status(500).json({ error: "Failed to load plan" });
+    }
+  });
+
+  router.post("/plan/:planId/items/:itemId/apply", authMiddleware, async (req, res) => {
+    try {
+      const { planId, itemId } = req.params;
+      if (!planId || !itemId) return res.status(400).json({ error: "Missing plan or item id" });
+
+      const itemRes = await pool.query(
+        `
+        SELECT i.*, p.plan_date
+        FROM meal_plan_items i
+        JOIN meal_plans p ON p.id = i.plan_id
+        WHERE i.id = $1 AND i.plan_id = $2 AND p.user_id = $3
+        LIMIT 1
+        `,
+        [itemId, planId, req.user.id]
+      );
+      if (itemRes.rowCount === 0) {
+        return res.status(404).json({ error: "Plan item not found" });
+      }
+      const item = itemRes.rows[0];
+
+      await pool.query(
+        `UPDATE meal_plan_items SET applied = true WHERE id = $1 AND plan_id = $2`,
+        [itemId, planId]
+      );
+
+      // Log into existing nutrition flow
+      const baseFood = {
+        id: item.food_item_id || item.id,
+        name: item.title,
+        unit: item.serving_unit || item.unit || "1 serving",
+        calories: item.calories,
+        protein: item.protein,
+        carbs: item.carbs,
+        fats: item.fats,
+      };
+      const quantity = safeNumber(item.serving_qty || 1, 1);
+      const scaled = computeScaledMacros(baseFood, quantity);
+      const payload = {
+        foodItemId: baseFood.id,
+        foodName: baseFood.name,
+        unit: baseFood.unit,
+        calories: baseFood.calories,
+        protein: baseFood.protein,
+        carbs: baseFood.carbs,
+        fats: baseFood.fats,
+        quantity,
+        mealType: item.meal_type || "snack",
+        consumedAt: item.plan_date,
+      };
+
+      // Reuse log endpoint logic
+      try {
+        const insert = await pool.query(
+          `
+          INSERT INTO meal_entries (
+            user_id, food_item_id, quantity, calories, protein, carbs, fats, meal_type, entry_date, created_at
+          )
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+          RETURNING *
+          `,
+          [
+            req.user.id,
+            await ensureFoodItem(baseFood),
+            safeNumber(payload.quantity),
+            scaled.calories,
+            scaled.protein,
+            scaled.carbs,
+            scaled.fats,
+            normalizeMealType(payload.mealType),
+            payload.consumedAt || new Date().toISOString().slice(0, 10),
+          ]
+        );
+        const entry = insert.rows[0];
+        entry.food_name = baseFood.name;
+        entry.food_unit = baseFood.unit;
+      } catch (err) {
+        console.error("Plan apply log error:", err.message);
+      }
+
+      const updatedPlan = await getPlanWithItems(planId, req.user.id);
+      const summary = await getDaySummary(req.user.id, item.plan_date);
+      return res.json({
+        plan: {
+          id: updatedPlan.id,
+          plan_date: updatedPlan.plan_date,
+          status: updatedPlan.status,
+          note: updatedPlan.note,
+        },
+        items: updatedPlan.items || [],
+        summary,
+      });
+    } catch (err) {
+      console.error("Nutrition plan apply error:", err.message);
+      return res.status(500).json({ error: "Failed to apply plan item" });
+    }
+  });
+
+  router.post("/plan/:planId/items/:itemId/swap", authMiddleware, async (req, res) => {
+    try {
+      const { planId, itemId } = req.params;
+      if (!planId || !itemId) return res.status(400).json({ error: "Missing plan or item id" });
+
+      const itemRes = await pool.query(
+        `
+        SELECT i.*, p.plan_date, i.meal_type
+        FROM meal_plan_items i
+        JOIN meal_plans p ON p.id = i.plan_id
+        WHERE i.id = $1 AND i.plan_id = $2 AND p.user_id = $3
+        LIMIT 1
+        `,
+        [itemId, planId, req.user.id]
+      );
+      if (itemRes.rowCount === 0) {
+        return res.status(404).json({ error: "Plan item not found" });
+      }
+      const item = itemRes.rows[0];
+      const templates = await fetchTemplates();
+      const swapCandidates = templates
+        .flatMap((tpl) =>
+          (tpl.items || []).filter(
+            (x) => (x.meal_type || "").toLowerCase() === (item.meal_type || "").toLowerCase()
+          )
+        )
+        .filter((x) => x.id !== item.template_item_id);
+      const suggestion = pickSwap(swapCandidates) || {
+        title: `${item.title} alt`,
+        description: "Nova varijanta",
+        calories: item.calories || 400,
+        protein: item.protein || 25,
+        carbs: item.carbs || 30,
+        fats: item.fats || 12,
+        serving_qty: item.serving_qty || 1,
+        serving_unit: item.serving_unit || item.unit || "1 serving",
+      };
+
+      await pool.query(
+        `
+        UPDATE meal_plan_items
+        SET
+          title = $1,
+          description = $2,
+          calories = $3,
+          protein = $4,
+          carbs = $5,
+          fats = $6,
+          serving_qty = $7,
+          serving_unit = $8,
+          ingredients = $9,
+          applied = false
+        WHERE id = $10 AND plan_id = $11
+        `,
+        [
+          suggestion.title,
+          suggestion.description || item.description || "",
+          safeNumber(suggestion.calories || item.calories),
+          safeNumber(suggestion.protein || item.protein),
+          safeNumber(suggestion.carbs || item.carbs),
+          safeNumber(suggestion.fats || item.fats),
+          safeNumber(suggestion.serving_qty || item.serving_qty || 1),
+          suggestion.serving_unit || item.serving_unit || item.unit || "1 serving",
+          suggestion.ingredients ? JSON.stringify(suggestion.ingredients) : item.ingredients,
+          itemId,
+          planId,
+        ]
+      );
+
+      const updatedPlan = await getPlanWithItems(planId, req.user.id);
+      return res.json({
+        plan: {
+          id: updatedPlan.id,
+          plan_date: updatedPlan.plan_date,
+          status: updatedPlan.status,
+          note: updatedPlan.note,
+        },
+        items: updatedPlan.items || [],
+      });
+    } catch (err) {
+      console.error("Nutrition plan swap error:", err.message);
+      return res.status(500).json({ error: "Failed to swap plan item" });
     }
   });
 
@@ -515,4 +897,3 @@ const routerFactory = (pool, authMiddleware) => {
 };
 
 module.exports = routerFactory;
-

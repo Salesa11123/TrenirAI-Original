@@ -25,6 +25,11 @@ import {
   ChevronLeft,
   ChevronRight,
   CalendarDays,
+  Bot,
+  Sparkles,
+  RefreshCcw,
+  Clock3,
+  Wand2,
 } from "lucide-react-native";
 import * as SecureStore from "expo-secure-store";
 
@@ -81,11 +86,22 @@ export default function Nutrition() {
   const [savingMeal, setSavingMeal] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [calendarDays, setCalendarDays] = useState([]);
+  const [coachOpen, setCoachOpen] = useState(false);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [applyingPlan, setApplyingPlan] = useState(false);
+  const [swapLoadingId, setSwapLoadingId] = useState("");
+  const [planCollapsed, setPlanCollapsed] = useState(false);
+  const [aiPlan, setAiPlan] = useState({
+    status: "idle",
+    meals: [],
+    note: "",
+    error: "",
+  });
 
   const BASE_URL =
     Platform.OS === "android"
       ? "http://10.0.2.2:4000"
-      : "http://192.168.1.110:4000";
+      : "http://192.168.100.139:4000";
   const authFetch = async (path, options = {}) => {
     const token = await SecureStore.getItemAsync("token");
     if (!token) throw new Error("Not authenticated");
@@ -97,6 +113,236 @@ export default function Nutrition() {
       },
     });
   };
+
+  const [planMeta, setPlanMeta] = useState({ id: "", date: "", status: "", note: "" });
+
+  const swapOptions = {};
+
+  const buildDemoPlan = (date) => {
+    const targets = summary.targets || defaultTargets;
+    const totalCalories = targets.calories || defaultTargets.calories;
+    const meals = [
+      {
+        id: `plan_breakfast_${date || today}`,
+        title: "Protein oats + berries",
+        time: "08:00",
+        mealType: "breakfast",
+        calories: Math.round(totalCalories * 0.22),
+        protein: Math.round((targets.protein || 140) * 0.28),
+        carbs: Math.round((targets.carbs || 240) * 0.22),
+        fats: Math.round((targets.fats || 70) * 0.18),
+        unit: "1 serving",
+        description: "Fast breakfast, high protein",
+        serving_qty: 1,
+        serving_unit: "1 bowl",
+        applied: false,
+      },
+      {
+        id: `plan_lunch_${date || today}`,
+        title: "Chicken + rice + veggies",
+        time: "12:30",
+        mealType: "lunch",
+        calories: Math.round(totalCalories * 0.3),
+        protein: Math.round((targets.protein || 140) * 0.3),
+        carbs: Math.round((targets.carbs || 240) * 0.32),
+        fats: Math.round((targets.fats || 70) * 0.22),
+        unit: "1 serving",
+        description: "Classic lunch, easy to swap",
+        serving_qty: 1,
+        serving_unit: "1 plate",
+        applied: false,
+      },
+      {
+        id: `plan_snack_${date || today}`,
+        title: "Greek yogurt + nuts",
+        time: "16:30",
+        mealType: "snack",
+        calories: Math.round(totalCalories * 0.14),
+        protein: Math.round((targets.protein || 140) * 0.16),
+        carbs: Math.round((targets.carbs || 240) * 0.12),
+        fats: Math.round((targets.fats || 70) * 0.2),
+        unit: "1 serving",
+        description: "Snack to fill protein gap",
+        serving_qty: 1,
+        serving_unit: "1 cup",
+        applied: false,
+      },
+      {
+        id: `plan_dinner_${date || today}`,
+        title: "Salmon + potatoes + salad",
+        time: "19:30",
+        mealType: "dinner",
+        calories: Math.round(totalCalories * 0.24),
+        protein: Math.round((targets.protein || 140) * 0.22),
+        carbs: Math.round((targets.carbs || 240) * 0.2),
+        fats: Math.round((targets.fats || 70) * 0.32),
+        unit: "1 serving",
+        description: "Balanced dinner to finish the day",
+        serving_qty: 1,
+        serving_unit: "1 plate",
+        applied: false,
+      },
+    ];
+    return {
+      status: "ready",
+      meals,
+      note: "AI demo plan based on your goals",
+      error: "",
+    };
+  };
+
+  const setPlanFromResponse = (data) => {
+    const items = data.items || [];
+    setPlanMeta({
+      id: data.plan?.id || "",
+      date: data.plan?.plan_date || selectedDate,
+      status: data.plan?.status || "active",
+      note: data.plan?.note || "",
+    });
+    setAiPlan({
+      status: "ready",
+      meals: items.map((m) => ({
+        id: m.id,
+        title: m.title,
+        time: m.planned_time,
+        mealType: (m.meal_type || "snack").toLowerCase(),
+        calories: m.calories,
+        protein: m.protein,
+        carbs: m.carbs,
+        fats: m.fats,
+        unit: m.unit || "1 serving",
+        serving_qty: m.serving_qty || 1,
+        serving_unit: m.serving_unit || m.unit || "1 serving",
+        description: m.description,
+        applied: !!m.applied,
+        ingredients: m.ingredients,
+      })),
+      note: data.plan?.note || "",
+      error: "",
+    });
+  };
+
+  const requestPlan = async () => {
+    setPlanLoading(true);
+    setAiPlan((prev) => ({ ...prev, status: "loading", error: "" }));
+    try {
+      const res = await authFetch(`/nutrition/plan?date=${selectedDate}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setPlanFromResponse(data);
+    } catch (err) {
+      console.error("Plan error:", err);
+      const plan = buildDemoPlan(selectedDate);
+      setAiPlan(plan);
+      setPlanMeta({ id: "", date: selectedDate, status: "demo", note: "Demo plan" });
+    } finally {
+      setPlanLoading(false);
+    }
+  };
+
+  const swapPlanMeal = (meal) => {
+    if (!meal) return;
+    if (!planMeta.id) {
+      requestPlan();
+      return;
+    }
+    if (meal.applied) return;
+    setSwapLoadingId(meal.id);
+    authFetch(`/nutrition/plan/${planMeta.id}/items/${meal.id}/swap`, {
+      method: "POST",
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        setPlanFromResponse(data);
+      })
+      .catch((err) => {
+        console.error("Swap plan error:", err);
+        Alert.alert("Swap failed", err.message || "Please try again.");
+      })
+      .finally(() => setSwapLoadingId(""));
+  };
+
+  const applyPlanMeal = async (meal) => {
+    if (!meal || applyingPlan) return;
+    if (meal.applied) return;
+    if (!planMeta.id) {
+      await requestPlan();
+      return;
+    }
+    setApplyingPlan(true);
+    try {
+      const res = await authFetch(
+        `/nutrition/plan/${planMeta.id}/items/${meal.id}/apply`,
+        { method: "POST" }
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      if (data.summary) setSummary(data.summary);
+      if (data.plan) setPlanFromResponse(data);
+    } catch (err) {
+      console.error("Plan apply error:", err);
+      Alert.alert("Not saved", err.message || "Please try again.");
+    } finally {
+      setApplyingPlan(false);
+    }
+  };
+
+  const planTotals = useMemo(() => {
+    return (aiPlan.meals || []).reduce(
+      (acc, m) => ({
+        calories: acc.calories + (m.calories || 0),
+        protein: acc.protein + (m.protein || 0),
+        carbs: acc.carbs + (m.carbs || 0),
+        fats: acc.fats + (m.fats || 0),
+        appliedCount: acc.appliedCount + (m.applied ? 1 : 0),
+      }),
+      { calories: 0, protein: 0, carbs: 0, fats: 0, appliedCount: 0 }
+    );
+  }, [aiPlan.meals]);
+
+  const remainingAfterPlan = useMemo(() => {
+    const targets = summary.targets || defaultTargets;
+    const totals = summary.totals || {
+      calories: 0,
+      protein: 0,
+      carbs: 0,
+      fats: 0,
+    };
+    const planned = (aiPlan.meals || []).reduce(
+      (acc, m) =>
+        m.applied
+          ? acc
+          : {
+              calories: acc.calories + (m.calories || 0),
+              protein: acc.protein + (m.protein || 0),
+              carbs: acc.carbs + (m.carbs || 0),
+              fats: acc.fats + (m.fats || 0),
+            },
+      { calories: 0, protein: 0, carbs: 0, fats: 0 }
+    );
+    return {
+      calories: Math.max(
+        0,
+        Math.round((targets.calories || 0) - (totals.calories || 0) - planned.calories)
+      ),
+      protein: Math.max(
+        0,
+        Math.round((targets.protein || 0) - (totals.protein || 0) - planned.protein)
+      ),
+      carbs: Math.max(
+        0,
+        Math.round((targets.carbs || 0) - (totals.carbs || 0) - planned.carbs)
+      ),
+      fats: Math.max(
+        0,
+        Math.round((targets.fats || 0) - (totals.fats || 0) - planned.fats)
+      ),
+    };
+  }, [aiPlan.meals, summary]);
 
   useEffect(() => {
     loadSummary(selectedDate);
@@ -401,8 +647,78 @@ export default function Nutrition() {
             }}
           >
             <CalendarDays color="#22D3EE" size={18} />
-            <Text style={{ color: "#E5E7EB", fontWeight: "700" }}>Kalendar</Text>
+            <Text style={{ color: "#E5E7EB", fontWeight: "700" }}>Calendar</Text>
           </TouchableOpacity>
+        </View>
+
+        <View
+          style={{
+            backgroundColor: "#0F1E32",
+            borderRadius: 16,
+            padding: 16,
+            marginBottom: 14,
+            borderWidth: 1,
+            borderColor: "#22D3EE33",
+            gap: 10,
+          }}
+        >
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 10,
+              flexWrap: "wrap",
+            }}
+          >
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 10,
+                flexShrink: 1,
+                flex: 1,
+                minWidth: 0,
+              }}
+            >
+              <View
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 12,
+                  backgroundColor: "#12233A",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  borderWidth: 1,
+                  borderColor: "#22D3EE55",
+                }}
+              >
+                <Bot color="#22D3EE" size={20} />
+              </View>
+              <View>
+                <Text style={{ color: "#fff", fontWeight: "800", fontSize: 16 }}>
+                  AI Meal Coach
+                </Text>
+                <Text style={{ color: "#9CA3AF", fontSize: 12 }} numberOfLines={2}>
+                  Today's plan + swap in-tab
+                </Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              onPress={() => setCoachOpen(true)}
+              style={{
+                alignSelf: "flex-start",
+                paddingVertical: 8,
+                paddingHorizontal: 12,
+                backgroundColor: "#22D3EE",
+                borderRadius: 12,
+              }}
+            >
+              <Text style={{ color: "#0A1628", fontWeight: "800", fontSize: 12 }}>
+                Ask coach
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View
@@ -468,6 +784,278 @@ export default function Nutrition() {
               }}
             />
           </View>
+        </View>
+
+        <View
+          style={{
+            backgroundColor: "#0F1E32",
+            borderRadius: 16,
+            padding: 14,
+            marginBottom: 18,
+            borderWidth: 1,
+            borderColor: "#22D3EE33",
+            gap: 10,
+          }}
+        >
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+            }}
+          >
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={{ fontSize: 16, color: "#fff", fontWeight: "800" }}>
+                Suggested plan (AI)
+              </Text>
+              <Text style={{ color: "#9CA3AF", fontSize: 12 }} numberOfLines={1}>
+                Swap then Apply & log to save
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => setPlanCollapsed(!planCollapsed)}
+              style={{
+                paddingVertical: 6,
+                paddingHorizontal: 10,
+                borderRadius: 10,
+                backgroundColor: "#0A1628",
+                borderWidth: 1,
+                borderColor: "#22D3EE33",
+              }}
+            >
+              <Text style={{ color: "#E5E7EB", fontWeight: "700", fontSize: 12 }}>
+                {planCollapsed ? "Show" : "Hide"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {!planCollapsed ? (
+            <>
+              <View
+                style={{
+                  flexDirection: "row",
+                  gap: 8,
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                }}
+              >
+                <TouchableOpacity
+                  onPress={requestPlan}
+                  disabled={planLoading}
+                  style={{
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    borderRadius: 10,
+                    backgroundColor: "#8EF264",
+                    opacity: planLoading ? 0.7 : 1,
+                  }}
+                >
+                  {planLoading ? (
+                    <ActivityIndicator color="#0A1628" />
+                  ) : (
+                    <Text style={{ color: "#0A1628", fontWeight: "800", fontSize: 12 }}>
+                      Generate
+                    </Text>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    setAiPlan({ status: "idle", meals: [], note: "", error: "" });
+                    setPlanMeta({ id: "", date: "", status: "", note: "" });
+                  }}
+                  style={{
+                    paddingVertical: 8,
+                    paddingHorizontal: 10,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: "#22D3EE33",
+                  }}
+                >
+                  <Text style={{ color: "#E5E7EB", fontWeight: "700", fontSize: 12 }}>
+                    Reset
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <Text style={{ color: "#9CA3AF", fontSize: 12 }}>
+                Apply & log saves to Today's Meals.
+              </Text>
+            </>
+          ) : null}
+
+          <Text style={{ color: "#9CA3AF", fontSize: 12 }}>
+            Swap updates suggestion/macros; Apply & log saves to Today's Meals.
+          </Text>
+
+          {aiPlan.status === "ready" && aiPlan.meals.length > 0 ? (
+            <View style={{ gap: 8 }}>
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: 6,
+                  backgroundColor: "#0A1628",
+                  borderRadius: 12,
+                  padding: 12,
+                  borderWidth: 1,
+                  borderColor: "#22D3EE22",
+                }}
+              >
+                <View style={{ minWidth: 0, flexShrink: 1 }}>
+                  <Text style={{ color: "#E5E7EB", fontWeight: "700" }}>
+                    Plan totals
+                  </Text>
+                  <Text style={{ color: "#9CA3AF", fontSize: 12 }}>
+                    {Math.round(planTotals.calories)} kcal | {Math.round(planTotals.protein)}P /{" "}
+                    {Math.round(planTotals.carbs)}C / {Math.round(planTotals.fats)}F
+                  </Text>
+                </View>
+                <View style={{ alignItems: "flex-end", minWidth: 0, flexShrink: 1 }}>
+                  <Text style={{ color: "#8EF264", fontWeight: "700" }}>
+                    Remaining (not applied)
+                  </Text>
+                  <Text style={{ color: "#9CA3AF", fontSize: 12 }}>
+                    {remainingAfterPlan.calories} kcal | {remainingAfterPlan.protein}P /{" "}
+                    {remainingAfterPlan.carbs}C / {remainingAfterPlan.fats}F
+                  </Text>
+                </View>
+              </View>
+
+              {aiPlan.meals.map((meal, idx) => {
+                const applied = meal.applied;
+                return (
+                  <View
+                    key={meal.id}
+                    style={{
+                      backgroundColor: applied ? "#123023" : "#0A1628",
+                      borderRadius: 14,
+                      padding: 12,
+                      borderWidth: 1,
+                      borderColor: applied ? "#8EF26455" : "#22D3EE22",
+                      gap: 8,
+                    }}
+                  >
+                    <View style={{ flexDirection: "row", gap: 10 }}>
+                      <View
+                        style={{
+                          width: 34,
+                          height: 34,
+                          borderRadius: 10,
+                          borderWidth: 1,
+                          borderColor: applied ? "#8EF264" : "#22D3EE66",
+                          backgroundColor: applied ? "#8EF26422" : "#0F1E32",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        {applied ? (
+                          <CheckCircle2 color="#8EF264" size={18} />
+                        ) : (
+                          <Text style={{ color: "#E5E7EB", fontWeight: "700" }}>
+                            {idx + 1}
+                          </Text>
+                        )}
+                      </View>
+                      <View style={{ flex: 1, gap: 4 }}>
+                        <View
+                          style={{
+                            flexDirection: "row",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                          }}
+                        >
+                          <Text style={{ color: "#fff", fontWeight: "800" }}>
+                            {meal.title}
+                          </Text>
+                          <Text style={{ color: "#9CA3AF", fontSize: 12 }}>
+                            {meal.time || "--:--"}
+                          </Text>
+                        </View>
+                          <Text style={{ color: "#9CA3AF", fontSize: 12 }}>
+                          {meal.description || meal.mealType}
+                        </Text>
+                        <Text style={{ color: "#9CA3AF", fontSize: 12 }}>
+                          Portion: {meal.serving_qty || 1} {meal.serving_unit || meal.unit || "serving"}
+                        </Text>
+                        <Text style={{ color: "#8EF264", fontWeight: "700", fontSize: 12 }}>
+                          {meal.calories} kcal | {meal.protein}P / {meal.carbs}C / {meal.fats}F
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View style={{ flexDirection: "row", gap: 8 }}>
+                      <TouchableOpacity
+                        onPress={() => applyPlanMeal(meal)}
+                        disabled={applied || applyingPlan}
+                        style={{
+                          flex: 1,
+                          paddingVertical: 10,
+                          borderRadius: 10,
+                          backgroundColor: applied ? "#8EF26455" : "#8EF264",
+                          alignItems: "center",
+                          opacity: applyingPlan ? 0.7 : 1,
+                        }}
+                      >
+                        {applied ? (
+                          <Text style={{ color: "#0A1628", fontWeight: "800" }}>Dodato</Text>
+                        ) : applyingPlan ? (
+                          <ActivityIndicator color="#0A1628" />
+                        ) : (
+                          <Text style={{ color: "#0A1628", fontWeight: "800" }}>
+                            Apply & log
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => swapPlanMeal(meal)}
+                        disabled={swapLoadingId === meal.id || applied}
+                        style={{
+                          paddingVertical: 10,
+                          paddingHorizontal: 14,
+                          borderRadius: 10,
+                          borderWidth: 1,
+                          borderColor: "#22D3EE55",
+                          backgroundColor: "#0F1E32",
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 6,
+                          flex: 1,
+                          opacity: applied ? 0.5 : 1,
+                        }}
+                      >
+                        {swapLoadingId === meal.id ? (
+                          <ActivityIndicator color="#22D3EE" />
+                        ) : (
+                          <>
+                            <Wand2 color="#22D3EE" size={16} />
+                            <Text style={{ color: "#E5E7EB", fontWeight: "700", fontSize: 12 }}>
+                              Swap
+                            </Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          ) : aiPlan.status === "loading" ? (
+            <View style={{ paddingVertical: 10 }}>
+              <ActivityIndicator color="#22D3EE" />
+            </View>
+          ) : (
+            <View style={{ gap: 6 }}>
+              <Text style={{ color: "#9CA3AF", fontSize: 12 }}>
+                Tap "Generate plan" to get a daily menu for check/swap/log.
+              </Text>
+              {aiPlan.error ? (
+                <Text style={{ color: "#EF4444", fontSize: 12 }}>{aiPlan.error}</Text>
+              ) : null}
+            </View>
+          )}
         </View>
 
         <TouchableOpacity
@@ -696,6 +1284,21 @@ export default function Nutrition() {
         )}
       </ScrollView>
 
+      <CoachModal
+        visible={coachOpen}
+        onClose={() => setCoachOpen(false)}
+        onGeneratePlan={() => {
+          requestPlan();
+          setCoachOpen(false);
+        }}
+        onQuickSwap={() => {
+          if (aiPlan.meals[0]) swapPlanMeal(aiPlan.meals[0]);
+        }}
+        onQuickSnack={() => {
+          const snack = aiPlan.meals.find((m) => m.mealType === "snack");
+          if (snack) swapPlanMeal(snack);
+        }}
+      />
       <MealModal
         visible={logOpen}
         onClose={() => setLogOpen(false)}
@@ -974,9 +1577,9 @@ function MealModal({
                     {item.name}
                   </Text>
                   <Text style={{ color: "#9CA3AF", fontSize: 12 }}>
-                    {item.unit || "1 serving"} • {item.calories} kcal •{" "}
+                    {item.unit || "1 serving"}  {item.calories} kcal {" "}
                     {item.protein}P / {item.carbs}C / {item.fats}F{" "}
-                    {item.region ? `• ${item.region}` : ""}
+                    {item.region ? ` ${item.region}` : ""}
                   </Text>
                 </View>
                 {active ? <CheckCircle2 color="#8EF264" size={22} /> : null}
@@ -1157,7 +1760,7 @@ function CalendarModal({ visible, onClose, days = [], onSelect }) {
           }}
         >
           <Text style={{ color: "#fff", fontSize: 18, fontWeight: "800" }}>
-            Dnevni pregled
+            Daily overview
           </Text>
           <TouchableOpacity onPress={onClose}>
             <X color="#9CA3AF" size={22} />
@@ -1235,6 +1838,122 @@ function CalendarModal({ visible, onClose, days = [], onSelect }) {
             );
           })}
         </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+function CoachModal({ visible, onClose, onGeneratePlan, onQuickSwap, onQuickSnack }) {
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: "#0A1628",
+          paddingTop: 20,
+          paddingHorizontal: 20,
+        }}
+      >
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 12,
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Bot color="#22D3EE" size={20} />
+            <Text style={{ color: "#fff", fontSize: 18, fontWeight: "800" }}>
+              AI coach
+            </Text>
+          </View>
+          <TouchableOpacity onPress={onClose}>
+            <X color="#9CA3AF" size={22} />
+          </TouchableOpacity>
+        </View>
+
+        <View style={{ gap: 10, marginTop: 4 }}>
+          {[
+            {
+              label: "Suggest daily plan",
+              onPress: onGeneratePlan,
+              icon: <Sparkles color="#0A1628" size={18} />,
+              bg: "#8EF264",
+              color: "#0A1628",
+              subtitle: "4-6 meals with exact grams",
+            },
+            {
+              label: "Quick meal swap",
+              onPress: onQuickSwap,
+              icon: <Wand2 color="#22D3EE" size={18} />,
+              bg: "#0F1E32",
+              color: "#E5E7EB",
+              subtitle: "Missing ingredient? Get an alternative",
+            },
+            {
+              label: "Protein gap snack",
+              onPress: onQuickSnack,
+              icon: <Apple color="#8EF264" size={18} />,
+              bg: "#0F1E32",
+              color: "#E5E7EB",
+              subtitle: "Fast snack 150-250 kcal, high protein",
+            },
+            {
+              label: "Plan for tomorrow (draft)",
+              onPress: onGeneratePlan,
+              icon: <Clock3 color="#22D3EE" size={18} />,
+              bg: "#0F1E32",
+              color: "#E5E7EB",
+              subtitle: "Prepare menu ahead",
+            },
+          ].map((item) => (
+            <TouchableOpacity
+              key={item.label}
+              onPress={() => {
+                item.onPress && item.onPress();
+                onClose && onClose();
+              }}
+              style={{
+                backgroundColor: item.bg,
+                borderRadius: 14,
+                padding: 14,
+                borderWidth: 1,
+                borderColor: item.bg === "#8EF264" ? "#8EF26499" : "#22D3EE22",
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 12,
+              }}
+            >
+              <View
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 12,
+                  backgroundColor: item.bg === "#8EF264" ? "#0A1628" : "#12233A",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  borderWidth: 1,
+                  borderColor: "#22D3EE33",
+                }}
+              >
+                {item.icon}
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: item.color, fontWeight: "800", fontSize: 15 }}>
+                  {item.label}
+                </Text>
+                <Text style={{ color: "#9CA3AF", fontSize: 12 }}>{item.subtitle}</Text>
+              </View>
+              <ChevronRight color="#9CA3AF" size={18} />
+            </TouchableOpacity>
+          ))}
+        </View>
       </View>
     </Modal>
   );

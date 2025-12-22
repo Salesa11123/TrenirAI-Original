@@ -34,7 +34,7 @@ export default function Home() {
   const BASE_URL =
     Platform.OS === "android"
       ? "http://10.0.2.2:4000"
-      : "http://192.168.100.114:4000";
+      : "http://192.168.100.139:4000";
 
   useEffect(() => {
     fetchWorkouts();
